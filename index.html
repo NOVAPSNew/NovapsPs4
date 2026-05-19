@@ -86,6 +86,9 @@
             border: 2px solid transparent;
             transition: 0.2s;
             cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
 
         .game-card:hover, .game-card:active { border-color: var(--ps-accent); transform: scale(1.02); }
@@ -97,7 +100,7 @@
             background: #222;
         }
 
-        .game-info { padding: 10px; }
+        .game-info { padding: 10px; flex-grow: 1; }
         .game-title { font-weight: bold; font-size: 13px; height: 34px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
         .install-btn {
@@ -110,6 +113,8 @@
             width: 100%;
             text-transform: uppercase;
         }
+
+        .install-btn:hover { background: var(--ps-accent); }
 
         #status-msg {
             position: fixed;
@@ -126,6 +131,7 @@
             box-shadow: 0 0 20px rgba(0,0,0,1);
             width: 80%;
             max-width: 400px;
+            color: white;
         }
 
         .loading { font-size: 24px; margin: 60px; color: var(--ps-accent); }
@@ -161,24 +167,34 @@
         const ipInput = document.getElementById('ip-input');
         const statusMsg = document.getElementById('status-msg');
 
-        // 1. CARGA DE CATÁLOGO
+        // 1. CARGA DE CATÁLOGO CORREGIDA
         async function loadCatalog() {
             try {
                 const res = await fetch(CATALOG_URL + '?t=' + Date.now());
-                const text = await res.text();
-                let data;
-                try {
-                    data = JSON.parse(text);
-                } catch(e) {
-                    const cleanText = text.substring(0, text.lastIndexOf('}') + 1);
-                    data = JSON.parse(cleanText + (cleanText.endsWith('}}') ? '' : '}'));
-                }
-                const gamesData = data.DATA || {};
-                allGames = Object.keys(gamesData).map(url => ({ url, ...gamesData[url] }));
+                const data = await res.json();
+                
+                // Extraer los juegos procesando correctamente la estructura interna del JSON
+                const gamesData = data.DATA || data || {};
+                allGames = Object.keys(gamesData).map(key => {
+                    const item = gamesData[key];
+                    // Conseguir la URL del PKG desde la jerarquía correcta
+                    let pkgUrl = "";
+                    if (item.links) {
+                        pkgUrl = (item.links.premium && item.links.premium[0]) || 
+                                 (item.links.normal && item.links.normal[0]) || "";
+                    }
+                    return {
+                        name: item.name || key,
+                        cover_url: item.cover_url || '',
+                        url: pkgUrl
+                    };
+                }).filter(g => g.url !== ""); // Descartar juegos sin links válidos
+
                 render(allGames);
                 loading.style.display = 'none';
             } catch (e) {
-                loading.innerHTML = "Error al cargar juegos.";
+                console.error(e);
+                loading.innerHTML = "Error al cargar o procesar el JSON de juegos.";
             }
         }
 
@@ -194,34 +210,38 @@
                     </div>
                     <button class="install-btn">Instalar</button>
                 `;
-                div.onclick = () => install(g);
+                // Asignar el evento al botón o tarjeta
+                div.querySelector('.install-btn').onclick = (e) => {
+                    e.stopPropagation();
+                    install(g);
+                };
                 gameGrid.appendChild(div);
             });
         }
 
-        // 2. DETECCIÓN Y ESCANEO DE IP (Lógica SuperPSX)
+        // 2. DETECCIÓN Y ESCANEO DE IP
         async function initIP() {
             const savedIP = localStorage.getItem('ps4_ip');
             if (savedIP) {
                 ipInput.value = savedIP;
-                // Verificar si la IP guardada sigue activa
                 if (await checkIP(savedIP)) return;
             }
-
-            // Si no hay guardada o no responde, buscar en la subred
             detectSubnetAndScan();
         }
 
         async function checkIP(ip) {
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 800);
+                const timeoutId = setTimeout(() => controller.abort(), 600);
+                
+                // El RPI no maneja CORS, usamos mode: 'no-cors' para saltar restricciones en peticiones locales
                 await fetch(`http://${ip}:${PORT}/api/is_exists`, {
                     method: 'POST',
                     mode: 'no-cors',
                     signal: controller.signal
                 });
-                return true; // Si llegamos aquí, la IP respondió
+                clearTimeout(timeoutId);
+                return true; 
             } catch (e) {
                 return false;
             }
@@ -233,7 +253,8 @@
 
             window.RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
             if (!window.RTCPeerConnection) {
-                ipInput.value = "192.168.1.XXX";
+                ipInput.placeholder = "Digita tu IP manualmente";
+                isScanning = false;
                 return;
             }
 
@@ -250,14 +271,21 @@
                     scanSubnet(subnet);
                 }
             };
+            
+            // Failsafe por si WebRTC tarda o es bloqueado
+            setTimeout(() => {
+                if(ipInput.value === "" && ipInput.placeholder.includes("Buscando")) {
+                    ipInput.placeholder = "Digita tu IP manualmente";
+                    isScanning = false;
+                }
+            }, 5000);
         }
 
         async function scanSubnet(subnet) {
-            ipInput.placeholder = "Escaneando " + subnet + "X...";
-            // Escaneo en paralelo (chunks de 20 para no saturar)
-            for (let i = 1; i < 255; i += 20) {
+            ipInput.placeholder = "Buscando en " + subnet + "X...";
+            for (let i = 1; i < 255; i += 25) {
                 const tasks = [];
-                for (let j = i; j < i + 20 && j < 255; j++) {
+                for (let j = i; j < i + 25 && j < 255; j++) {
                     const ip = subnet + j;
                     tasks.push(checkIP(ip).then(found => found ? ip : null));
                 }
@@ -267,50 +295,52 @@
                     ipInput.value = foundIP;
                     localStorage.setItem('ps4_ip', foundIP);
                     showStatus("¡Consola Detectada en " + foundIP + "!", "success");
+                    setTimeout(() => statusMsg.style.display = 'none', 3000);
                     isScanning = false;
                     return;
                 }
             }
-            ipInput.placeholder = "Consola no encontrada";
+            ipInput.placeholder = "Digita tu IP manualmente";
             isScanning = false;
         }
 
-        // 3. ENVÍO DE COMANDO RPI (JSON POST)
+        // 3. ENVÍO DE COMANDO REESTRUCTURADO Y CORREGIDO
         async function install(game) {
             const ip = ipInput.value.trim();
-            if (!ip || ip.includes('X')) {
-                showStatus("Error: IP de consola no válida", "error");
+            if (!ip || ip.includes('X') || ip === "") {
+                showStatus("Error: Por favor introduce la IP de tu consola", "error");
                 return;
             }
 
-            // Convertimos el link a HTTP para mayor compatibilidad con la PS4
+            if (!game.url) {
+                showStatus("Error: Este juego no contiene un enlace de descarga válido", "error");
+                return;
+            }
+
+            // Forzar enlaces HTTP si fuesen necesarios para compatibilidad interna de RPI
             const pkgUrl = game.url.replace(/^https:\/\//i, 'http://');
 
-            showStatus("<b>ENVIANDO A CONSOLA</b><br>" + game.name);
+            showStatus("<b>ENVIANDO A CONSOLA...</b><br>" + game.name);
 
+            // Estructura oficial requerida por el Servidor RPI
             const payload = JSON.stringify({
                 type: "direct",
                 packages: [pkgUrl]
             });
 
             try {
-                fetch(`http://${ip}:${PORT}/api/install`, {
+                // Enviamos la petición en modo 'no-cors' ya que la PS4 no devolverá cabeceras de origen cruzado
+                await fetch(`http://${ip}:${PORT}/api/install`, {
                     method: 'POST',
-                    body: payload,
-                    mode: 'no-cors'
+                    mode: 'no-cors',
+                    body: payload
                 });
 
-                // Backup a localhost por si la web corre en la propia PS4
-                if (ip !== '127.0.0.1' && ip !== 'localhost') {
-                    fetch(`http://127.0.0.1:${PORT}/api/install`, { method: 'POST', body: payload, mode: 'no-cors' });
-                }
+                showStatus("<b>¡ORDEN ENVIADA!</b><br>Verifica el menú de descargas/notificaciones en tu consola.", "success");
+                setTimeout(() => statusMsg.style.display = 'none', 5000);
 
-                setTimeout(() => {
-                    showStatus("<b>¡ORDEN PROCESADA!</b><br>Revisa las notificaciones de tu PS4.", "success");
-                    setTimeout(() => statusMsg.style.display = 'none', 5000);
-                }, 1500);
             } catch (e) {
-                showStatus("Error al conectar con la consola", "error");
+                showStatus("Error al comunicar con el instalador de la consola.", "error");
             }
         }
 
