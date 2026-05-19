@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NOVAPS - PS4 Store</title>
+    <style>
+        :root {
+            --ps-blue: #003791;
+            --ps-dark: #0a0a0a;
+            --ps-light: #e0e0e0;
+            --ps-accent: #0072ce;
+        }
+
+        body {
+            background-color: var(--ps-dark);
+            color: var(--ps-light);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            width: 100%;
+            max-width: 1000px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--ps-accent);
+            text-shadow: 0 0 10px rgba(0, 114, 206, 0.5);
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        input {
+            background: #222;
+            border: 1px solid #444;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--ps-accent);
+            box-shadow: 0 0 5px var(--ps-accent);
+        }
+
+        #search-input {
+            flex-grow: 1;
+            min-width: 250px;
+        }
+
+        #ip-input {
+            width: 150px;
+        }
+
+        .game-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .game-card {
+            background: #1a1a1a;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+        }
+
+        .game-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            border-color: var(--ps-accent);
+        }
+
+        .game-cover {
+            width: 100%;
+            aspect-ratio: 2/3;
+            object-fit: cover;
+            background: #222;
+        }
+
+        .game-info {
+            padding: 12px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .game-title {
+            font-weight: bold;
+            font-size: 14px;
+            height: 40px;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .game-meta {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .install-btn {
+            background: var(--ps-blue);
+            color: white;
+            border: none;
+            padding: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: auto;
+        }
+
+        .install-btn:hover {
+            background: var(--ps-accent);
+        }
+
+        .loading {
+            font-size: 20px;
+            margin-top: 50px;
+        }
+
+        #status-msg {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 5px;
+            display: none;
+            z-index: 1000;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .success { background: #2e7d32; color: white; }
+        .error { background: #c62828; color: white; }
+
+        /* PS4 Browser Optimizations */
+        @media (max-width: 600px) {
+            .game-grid {
+                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>NOVAPS</h1>
+        <div class="controls">
+            <div style="display:flex; flex-direction:column; gap:5px;">
+                <label for="ip-input" style="font-size:12px; color:#aaa;">IP de la Consola:</label>
+                <input type="text" id="ip-input" placeholder="ej: 192.168.1.50">
+            </div>
+            <div style="display:flex; flex-direction:column; gap:5px; flex-grow:1;">
+                <label for="search-input" style="font-size:12px; color:#aaa;">Buscador:</label>
+                <div style="display:flex; gap:10px;">
+                    <input type="text" id="search-input" placeholder="Nombre del juego o ID..." style="flex-grow:1;">
+                    <button onclick="fetchCatalog()" class="install-btn" style="border-radius:5px; width: auto; padding: 0 15px;">Actualizar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading" class="loading">Cargando catálogo...</div>
+    <div id="game-grid" class="game-grid"></div>
+
+    <div id="status-msg"></div>
+
+    <script>
+        const CATALOG_URL = 'https://raw.githubusercontent.com/NOVAPSNew/Ps4prueba01/main/GAMES.json';
+        const DEFAULT_PORT = '12801';
+        let allGames = [];
+
+        // Elements
+        const gameGrid = document.getElementById('game-grid');
+        const loading = document.getElementById('loading');
+        const searchInput = document.getElementById('search-input');
+        const ipInput = document.getElementById('ip-input');
+        const statusMsg = document.getElementById('status-msg');
+
+        // Load saved IP
+        const isPS4 = navigator.userAgent.includes('PlayStation 4');
+        ipInput.value = localStorage.getItem('ps4_ip') || (isPS4 ? '127.0.0.1' : '');
+
+        if (isPS4) {
+            document.body.style.zoom = "1.0"; // Optimize for TV
+            showStatus('Consola PS4 Detectada', 'success');
+        }
+
+        // WebRTC Local IP Detection
+        function detectLocalIP() {
+            if (ipInput.value && ipInput.value !== '127.0.0.1') return;
+
+            window.RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
+            if (!window.RTCPeerConnection) return;
+
+            const pc = new RTCPeerConnection({ iceServers: [] });
+            pc.createDataChannel("");
+            pc.createOffer().then(offer => pc.setLocalDescription(offer));
+            pc.onicecandidate = (ice) => {
+                if (!ice || !ice.candidate || !ice.candidate.candidate) return;
+                const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/;
+                const match = ipRegex.exec(ice.candidate.candidate);
+                if (match && match[1] && !match[1].startsWith('127.')) {
+                    const myIP = match[1];
+                    ipInput.value = myIP;
+                    localStorage.setItem('ps4_ip', myIP);
+                    showStatus('IP Local Vinculada: ' + myIP, 'success');
+                    pc.onicecandidate = null;
+                }
+            };
+        }
+
+        // Only try to scan or detect if we are NOT on a PS4 or don't have an IP
+        if (!isPS4 && !ipInput.value) {
+            detectLocalIP();
+        } else if (isPS4) {
+            // On PS4, 127.0.0.1 is usually enough for RPI if it's the same console
+            console.log("Running on PS4, using local connection.");
+        }
+
+        // Save IP on change
+        ipInput.addEventListener('input', () => {
+            localStorage.setItem('ps4_ip', ipInput.value);
+        });
+
+        async function fetchCatalog() {
+            loading.style.display = 'block';
+            loading.textContent = 'Cargando catálogo...';
+            try {
+                const response = await fetch(CATALOG_URL + '?t=' + new Date().getTime());
+                if (!response.ok) {
+                    throw new Error(`Error de red: ${response.status} ${response.statusText}`);
+                }
+                const text = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    // Intento de limpieza si el JSON viene con errores de truncado al final
+                    console.warn('JSON malformado, intentando reparar...');
+                    const lastBrace = text.lastIndexOf('}');
+                    if (lastBrace !== -1) {
+                        data = JSON.parse(text.substring(0, lastBrace + 1) + '}}');
+                    } else {
+                        throw e;
+                    }
+                }
+
+                const gamesData = data.DATA || {};
+                allGames = Object.keys(gamesData).map(url => ({
+                    url: url,
+                    ...gamesData[url]
+                }));
+
+                if (allGames.length === 0) {
+                    loading.textContent = 'El catálogo está vacío o el formato es incorrecto.';
+                } else {
+                    loading.style.display = 'none';
+                    renderGames(allGames);
+                }
+            } catch (error) {
+                console.error('Error loading catalog:', error);
+                loading.innerHTML = `
+                    <div style="color: #ff5252;">
+                        Error al cargar el catálogo.<br>
+                        <small style="color: #888;">${error.message}</small>
+                    </div>
+                    <button onclick="fetchCatalog()" class="install-btn" style="margin-top:10px; border-radius:5px; width:auto;">Reintentar</button>
+                `;
+            }
+        }
+
+        function renderGames(games) {
+            gameGrid.innerHTML = '';
+            games.forEach(game => {
+                const card = document.createElement('div');
+                card.className = 'game-card';
+                card.onclick = () => installGame(game);
+
+                const sizeGB = (game.size / (1024 * 1024 * 1024)).toFixed(2);
+
+                card.innerHTML = `
+                    <img class="game-cover" src="${game.cover_url}" alt="${game.name}" onerror="this.src='https://via.placeholder.com/200x300?text=No+Image'">
+                    <div class="game-info">
+                        <div class="game-title">${game.name}</div>
+                        <div class="game-meta">${game.title_id} | ${game.region}</div>
+                        <div class="game-meta">Size: ${sizeGB} GB</div>
+                        <div class="game-meta">FW: ${game.min_fw}</div>
+                    </div>
+                    <button class="install-btn">ENVIAR A PS4</button>
+                `;
+                gameGrid.appendChild(card);
+            });
+        }
+
+        function filterGames() {
+            const query = searchInput.value.toLowerCase();
+            const filtered = allGames.filter(game =>
+                game.name.toLowerCase().includes(query) ||
+                game.title_id.toLowerCase().includes(query)
+            );
+            renderGames(filtered);
+        }
+
+        searchInput.addEventListener('input', filterGames);
+
+        async function installGame(game) {
+            const ip = ipInput.value.trim();
+            if (!ip) {
+                showStatus('Por favor, ingresa la IP de tu PS4', 'error');
+                ipInput.focus();
+                return;
+            }
+
+            showStatus(`Enviando ${game.name}...`, '');
+
+            const payload = {
+                type: 'direct',
+                packages: [game.url]
+            };
+
+            try {
+                // We use a timeout because RPI might not return CORS headers
+                // and the browser might block the response, even if the request reached the PS4.
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+                const response = await fetch(`http://${ip}:${DEFAULT_PORT}/api/install`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    showStatus('¡Enviado con éxito! Revisa las notificaciones de tu PS4.', 'success');
+                } else {
+                    showStatus('Error: La consola respondió con un error.', 'error');
+                }
+            } catch (error) {
+                // If it's a CORS error, the request might have still worked!
+                // RPI doesn't always handle CORS well.
+                if (error.name === 'AbortError') {
+                    showStatus('Tiempo de espera agotado. ¿Está abierto Remote Package Installer?', 'error');
+                } else {
+                    // In many cases with RPI, we get a TypeError because of CORS,
+                    // but the package starts downloading anyway.
+                    showStatus('Tarea enviada. Si no aparece, verifica la IP y que RPI esté abierto.', 'success');
+                    console.warn('Possible CORS error or connection issue, but often RPI starts anyway:', error);
+                }
+            }
+        }
+
+        function showStatus(msg, type) {
+            statusMsg.textContent = msg;
+            statusMsg.className = type;
+            statusMsg.style.display = 'block';
+
+            if (type) {
+                setTimeout(() => {
+                    statusMsg.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Initial fetch
+        fetchCatalog();
+    </script>
+</body>
+</html>
