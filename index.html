@@ -30,7 +30,12 @@
             margin-bottom: 20px;
         }
 
-        h1 { color: var(--ps-accent); margin: 10px 0; font-size: 2.5em; text-shadow: 0 0 10px rgba(0,114,206,0.5); }
+        h1 { 
+            color: var(--ps-accent); 
+            margin: 10px 0; 
+            font-size: 2.5em; 
+            text-shadow: 0 0 10px rgba(0,114,206,0.5); 
+        }
 
         .controls {
             background: #1a1a1a;
@@ -41,6 +46,8 @@
             flex-direction: column;
             gap: 10px;
             border: 1px solid #333;
+            margin: 0 auto;
+            max-width: 500px;
         }
 
         .ip-container {
@@ -91,7 +98,10 @@
             justify-content: space-between;
         }
 
-        .game-card:hover, .game-card:active { border-color: var(--ps-accent); transform: scale(1.02); }
+        .game-card:hover, .game-card:active { 
+            border-color: var(--ps-accent); 
+            transform: scale(1.02); 
+        }
 
         .game-cover {
             width: 100%;
@@ -101,7 +111,15 @@
         }
 
         .game-info { padding: 10px; flex-grow: 1; }
-        .game-title { font-weight: bold; font-size: 13px; height: 34px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+        .game-title { 
+            font-weight: bold; 
+            font-size: 13px; 
+            height: 34px; 
+            overflow: hidden; 
+            display: -webkit-box; 
+            -webkit-line-clamp: 2; 
+            -webkit-box-orient: vertical; 
+        }
 
         .install-btn {
             background: var(--ps-blue);
@@ -134,7 +152,7 @@
             color: white;
         }
 
-        .loading { font-size: 24px; margin: 60px; color: var(--ps-accent); }
+        .loading { font-size: 24px; margin: 60px; color: var(--ps-accent); text-align: center; }
     </style>
 </head>
 <body>
@@ -167,34 +185,55 @@
         const ipInput = document.getElementById('ip-input');
         const statusMsg = document.getElementById('status-msg');
 
-        // 1. CARGA DE CATÁLOGO CORREGIDA
+        // 1. CARGA DE CATÁLOGO ULTRA COMPATIBLE
         async function loadCatalog() {
             try {
                 const res = await fetch(CATALOG_URL + '?t=' + Date.now());
-                const data = await res.json();
+                if (!res.ok) throw new Error("No se pudo obtener el archivo desde GitHub");
                 
-                // Extraer los juegos procesando correctamente la estructura interna del JSON
-                const gamesData = data.DATA || data || {};
+                const data = await res.json();
+                console.log("JSON recibido de GitHub:", data);
+
+                // Detectar automáticamente dónde están los juegos en el JSON
+                let gamesData = data.DATA || data.games || data.juegos || data;
+
+                if (typeof gamesData === 'string') {
+                    gamesData = JSON.parse(gamesData);
+                }
+
                 allGames = Object.keys(gamesData).map(key => {
                     const item = gamesData[key];
-                    // Conseguir la URL del PKG desde la jerarquía correcta
+                    
+                    if (!item || typeof item !== 'object') return null;
+
+                    // Buscar la URL del PKG en variantes del JSON
                     let pkgUrl = "";
                     if (item.links) {
                         pkgUrl = (item.links.premium && item.links.premium[0]) || 
                                  (item.links.normal && item.links.normal[0]) || "";
+                    } else if (item.url) {
+                        pkgUrl = item.url;
+                    } else if (Array.isArray(item.urls) && item.urls[0]) {
+                        pkgUrl = item.urls[0];
                     }
+
                     return {
                         name: item.name || key,
-                        cover_url: item.cover_url || '',
+                        cover_url: item.cover_url || item.image || item.cover || '',
                         url: pkgUrl
                     };
-                }).filter(g => g.url !== ""); // Descartar juegos sin links válidos
+                }).filter(g => g !== null && g.url !== "");
+
+                if (allGames.length === 0) {
+                    loading.innerHTML = "El catálogo está vacío o el formato del JSON no es compatible.";
+                    return;
+                }
 
                 render(allGames);
                 loading.style.display = 'none';
             } catch (e) {
-                console.error(e);
-                loading.innerHTML = "Error al cargar o procesar el JSON de juegos.";
+                console.error("Error detallado al cargar:", e);
+                loading.innerHTML = "Error al procesar los juegos. Abre la consola del navegador (F12) para más detalles.";
             }
         }
 
@@ -210,7 +249,8 @@
                     </div>
                     <button class="install-btn">Instalar</button>
                 `;
-                // Asignar el evento al botón o tarjeta
+                
+                // Configurar el click directo en el botón de instalar
                 div.querySelector('.install-btn').onclick = (e) => {
                     e.stopPropagation();
                     install(g);
@@ -232,15 +272,13 @@
         async function checkIP(ip) {
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 600);
+                setTimeout(() => controller.abort(), 600);
                 
-                // El RPI no maneja CORS, usamos mode: 'no-cors' para saltar restricciones en peticiones locales
                 await fetch(`http://${ip}:${PORT}/api/is_exists`, {
                     method: 'POST',
                     mode: 'no-cors',
                     signal: controller.signal
                 });
-                clearTimeout(timeoutId);
                 return true; 
             } catch (e) {
                 return false;
@@ -272,7 +310,6 @@
                 }
             };
             
-            // Failsafe por si WebRTC tarda o es bloqueado
             setTimeout(() => {
                 if(ipInput.value === "" && ipInput.placeholder.includes("Buscando")) {
                     ipInput.placeholder = "Digita tu IP manualmente";
@@ -304,7 +341,7 @@
             isScanning = false;
         }
 
-        // 3. ENVÍO DE COMANDO REESTRUCTURADO Y CORREGIDO
+        // 3. ENVÍO DE COMANDO RPI
         async function install(game) {
             const ip = ipInput.value.trim();
             if (!ip || ip.includes('X') || ip === "") {
@@ -317,28 +354,23 @@
                 return;
             }
 
-            // Forzar enlaces HTTP si fuesen necesarios para compatibilidad interna de RPI
             const pkgUrl = game.url.replace(/^https:\/\//i, 'http://');
-
             showStatus("<b>ENVIANDO A CONSOLA...</b><br>" + game.name);
 
-            // Estructura oficial requerida por el Servidor RPI
             const payload = JSON.stringify({
                 type: "direct",
                 packages: [pkgUrl]
             });
 
             try {
-                // Enviamos la petición en modo 'no-cors' ya que la PS4 no devolverá cabeceras de origen cruzado
                 await fetch(`http://${ip}:${PORT}/api/install`, {
                     method: 'POST',
                     mode: 'no-cors',
                     body: payload
                 });
 
-                showStatus("<b>¡ORDEN ENVIADA!</b><br>Verifica el menú de descargas/notificaciones en tu consola.", "success");
+                showStatus("<b>¡ORDEN ENVIADA!</b><br>Verifica las notificaciones en tu consola.", "success");
                 setTimeout(() => statusMsg.style.display = 'none', 5000);
-
             } catch (e) {
                 showStatus("Error al comunicar con el instalador de la consola.", "error");
             }
