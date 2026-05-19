@@ -185,7 +185,7 @@
         const ipInput = document.getElementById('ip-input');
         const statusMsg = document.getElementById('status-msg');
 
-        // 1. CARGA DE CATÁLOGO ADAPTADA EXACTAMENTE A TU FORMATO
+        // 1. CARGA DE CATÁLOGO ADAPTADA A TU FORMATO OBJETO DE URLS
         async function loadCatalog() {
             try {
                 const res = await fetch(CATALOG_URL + '?t=' + Date.now());
@@ -195,23 +195,19 @@
                 }
                 
                 const data = await res.json();
-                
-                // Si tus juegos vienen envueltos en un objeto base "DATA" o similar, o directo en la raíz:
                 let baseData = data.DATA || data.games || data;
 
-                // Mapear el JSON interpretando la "Key" como la URL del PKG
                 allGames = Object.keys(baseData).map(pkgUrl => {
                     const item = baseData[pkgUrl];
                     
-                    // Asegurarnos de que el item interno es un objeto válido y la clave tiene cara de URL
                     if (!item || typeof item !== 'object' || !pkgUrl.startsWith('http')) return null;
 
                     return {
                         name: item.name || "Juego sin nombre",
                         cover_url: item.cover_url || item.image || "",
-                        url: pkgUrl.trim() // La URL real es la clave del objeto
+                        url: pkgUrl.trim() 
                     };
-                }).filter(g => g !== null && g.url !== ""); // Limpiar elementos vacíos
+                }).filter(g => g !== null && g.url !== "");
 
                 if (allGames.length === 0) {
                     loading.innerHTML = "Error: La estructura del JSON cambió o no contiene URLs válidas como llaves.";
@@ -329,7 +325,7 @@
             isScanning = false;
         }
 
-        // 3. ENVÍO DE COMANDO RPI
+        // 3. ENVÍO DE COMANDO RPI (CORREGIDO PARA PASAR HTTPS A HTTP SIEMPRE)
         async function install(game) {
             const ip = ipInput.value.trim();
             if (!ip || ip.includes('X') || ip === "") {
@@ -342,7 +338,9 @@
                 return;
             }
 
+            // REGLA CRÍTICA: Reemplaza obligatoriamente https:// por http:// para evitar fallos en la consola
             const pkgUrl = game.url.replace(/^https:\/\//i, 'http://');
+            
             showStatus("<b>ENVIANDO A CONSOLA...</b><br>" + game.name);
 
             const payload = JSON.stringify({
